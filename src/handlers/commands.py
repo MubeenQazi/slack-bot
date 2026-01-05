@@ -3,6 +3,7 @@ Slack slash command handlers.
 """
 
 import logging
+import threading
 from src.config import Config
 from src.alert_service import AlertService
 
@@ -24,62 +25,73 @@ def register_commands(app, alert_service: AlertService):
         Handle /alert slash command for manual alert creation.
         
         Usage: /alert service=api severity=high message=test
-        """
-        ack()  # Acknowledge immediately
         
-        try:
-            text = command.get('text', '').strip()
-            
-            if not text:
-                respond(
-                    text="Usage: `/alert service=<name> severity=<level> message=<text>`\n" +
-                         "Example: `/alert service=api severity=high message=Response time critical`",
-                    response_type="ephemeral"
+        Note: Heavy work is done in background thread to avoid dispatch_failed timeout.
+        """
+        ack()  # Acknowledge immediately (return quickly)
+        
+        def process_alert():
+            """Background thread to process alert (avoid dispatch_failed timeout)."""
+            try:
+                text = command.get('text', '').strip()
+                
+                if not text:
+                    respond(
+                        text="Usage: `/alert service=<name> severity=<level> message=<text>`\n" +
+                             "Example: `/alert service=api severity=high message=Response time critical`",
+                        response_type="ephemeral"
+                    )
+                    return
+                
+                # Parse parameters
+                params = _parse_alert_params(text)
+                
+                if not params:
+                    respond(
+                        text="Invalid format. Use: `/alert service=<name> severity=<level> message=<text>`",
+                        response_type="ephemeral"
+                    )
+                    return
+                
+                # Create alert (shared code path with webhook)
+                alert = alert_service.create_alert(
+                    service=params['service'],
+                    severity=params['severity'],
+                    message=params['message']
                 )
-                return
-            
-            # Parse parameters
-            params = _parse_alert_params(text)
-            
-            if not params:
-                respond(
-                    text="❌ Invalid format. Use: `/alert service=<name> severity=<level> message=<text>`",
-                    response_type="ephemeral"
-                )
-                return
-            
-            # Create alert (shared code path with webhook)
-            alert = alert_service.create_alert(
-                service=params['service'],
-                severity=params['severity'],
-                message=params['message']
-            )
-            
-            # Update App Home for the invoking user
-            alert_service.update_app_home_for_user(command['user_id'])
-            
-            # Respond to user
-            if Config.SLACK_STUB:
-                respond(
-                    text=f"✅ [STUB MODE] Alert created (ID: {alert['id']})\n" +
-                         f"Service: `{alert['service']}` | Severity: `{alert['severity']}`\n" +
-                         f"Message: {alert['message']}",
-                    response_type="ephemeral"
-                )
-            else:
-                respond(
-                    text=f"✅ Alert created and posted to <#{Config.SLACK_ALERT_CHANNEL}> (ID: {alert['id']})\n" +
-                         f"Service: `{alert['service']}` | Severity: `{alert['severity']}`\n" +
-                         f"Message: {alert['message']}",
-                    response_type="ephemeral"
-                )
-            
-        except Exception as error:
-            logger.exception("Error handling /alert command")
-            respond(
-                text="❌ Failed to create alert. Please try again.",
-                response_type="ephemeral"
-            )
+                
+                # Update App Home for the invoking user
+                alert_service.update_app_home_for_user(command['user_id'])
+                
+                # Respond to user
+                if Config.SLACK_STUB:
+                    respond(
+                        text=f"Alert created (ID: {alert['id']})\n" +
+                             f"Service: `{alert['service']}` | Severity: `{alert['severity']}`\n" +
+                             f"Message: {alert['message']}",
+                        response_type="ephemeral"
+                    )
+                else:
+                    respond(
+                        text=f"Alert created and posted to #{Config.SLACK_ALERT_CHANNEL} (ID: {alert['id']})\n" +
+                             f"Service: `{alert['service']}` | Severity: `{alert['severity']}`\n" +
+                             f"Message: {alert['message']}",
+                        response_type="ephemeral"
+                    )
+                
+            except Exception as error:
+                logger.exception("Error processing /alert in background thread")
+                try:
+                    respond(
+                        text="Failed to create alert. Please try again.",
+                        response_type="ephemeral"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to send error response: {e}")
+        
+        # Start background thread (returns immediately from handler)
+        thread = threading.Thread(target=process_alert, daemon=True)
+        thread.start()
     
     @app.command("/hello")
     def handle_hello_command(ack, command, respond, client):
