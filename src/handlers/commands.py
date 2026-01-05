@@ -20,7 +20,7 @@ def register_commands(app, alert_service: AlertService):
     """
     
     @app.command("/alert")
-    def handle_alert_command(ack, command, respond):
+    def handle_alert_command(ack, command, respond, client):
         """
         Handle /alert slash command for manual alert creation.
         
@@ -36,10 +36,11 @@ def register_commands(app, alert_service: AlertService):
                 text = command.get('text', '').strip()
                 
                 if not text:
-                    respond(
+                    # Use client.chat_postMessage (not respond) for background thread
+                    client.chat_postMessage(
+                        channel=command['channel_id'],
                         text="Usage: `/alert service=<name> severity=<level> message=<text>`\n" +
-                             "Example: `/alert service=api severity=high message=Response time critical`",
-                        response_type="ephemeral"
+                             "Example: `/alert service=api severity=high message=Response time critical`"
                     )
                     return
                 
@@ -47,9 +48,10 @@ def register_commands(app, alert_service: AlertService):
                 params = _parse_alert_params(text)
                 
                 if not params:
-                    respond(
-                        text="Invalid format. Use: `/alert service=<name> severity=<level> message=<text>`",
-                        response_type="ephemeral"
+                    # Use client.chat_postMessage for background thread
+                    client.chat_postMessage(
+                        channel=command['channel_id'],
+                        text="Invalid format. Use: `/alert service=<name> severity=<level> message=<text>`"
                     )
                     return
                 
@@ -63,28 +65,28 @@ def register_commands(app, alert_service: AlertService):
                 # Update App Home for the invoking user
                 alert_service.update_app_home_for_user(command['user_id'])
                 
-                # Respond to user
+                # Respond to user using client (not respond which has 3-second timeout)
                 if Config.SLACK_STUB:
-                    respond(
+                    client.chat_postMessage(
+                        channel=command['channel_id'],
                         text=f"Alert created (ID: {alert['id']})\n" +
                              f"Service: `{alert['service']}` | Severity: `{alert['severity']}`\n" +
-                             f"Message: {alert['message']}",
-                        response_type="ephemeral"
+                             f"Message: {alert['message']}"
                     )
                 else:
-                    respond(
+                    client.chat_postMessage(
+                        channel=command['channel_id'],
                         text=f"Alert created and posted to #{Config.SLACK_ALERT_CHANNEL} (ID: {alert['id']})\n" +
                              f"Service: `{alert['service']}` | Severity: `{alert['severity']}`\n" +
-                             f"Message: {alert['message']}",
-                        response_type="ephemeral"
+                             f"Message: {alert['message']}"
                     )
                 
             except Exception as error:
                 logger.exception("Error processing /alert in background thread")
                 try:
-                    respond(
-                        text="Failed to create alert. Please try again.",
-                        response_type="ephemeral"
+                    client.chat_postMessage(
+                        channel=command['channel_id'],
+                        text="Failed to create alert. Please try again."
                     )
                 except Exception as e:
                     logger.error(f"Failed to send error response: {e}")
