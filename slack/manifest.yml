@@ -1,0 +1,38 @@
+display_information:
+  name: Alert Bot
+  description: Phase 1 Alert Bot - Webhook ingestion with Slack notifications
+  background_color: "#ff0000"
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: false
+  bot_user:
+    display_name: Alert Bot
+    always_online: true
+  slash_commands:
+    - command: /alert
+      description: Create a test alert manually
+      usage_hint: service=api severity=high message=test
+      should_escape: false
+    - command: /hello
+      description: Legacy hello command (backward compatibility)
+      usage_hint: ""
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - commands
+      - users:read
+      - im:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_home_opened
+      - app_mention
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
